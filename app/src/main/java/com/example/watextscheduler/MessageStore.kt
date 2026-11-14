@@ -4,7 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-enum class Status { PENDING, SENDING, SENT, FAILED, MISSED }
+enum class Status { PENDING, WAITING_UNLOCK, SENDING, SENT, FAILED, MISSED }
 
 data class ScheduledMessage(
     val id: Long,

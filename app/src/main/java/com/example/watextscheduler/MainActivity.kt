@@ -1,8 +1,10 @@
 package com.example.watextscheduler
 
+import android.Manifest
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -10,14 +12,18 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.watextscheduler.ui.theme.WaTextSchedulerTheme
@@ -27,12 +33,19 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
-    // Bumping this number makes the screen reload the list
     private var refreshTick by mutableIntStateOf(0)
+
+    private val askNotifications =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent {
             WaTextSchedulerTheme {
                 Surface(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -40,6 +53,7 @@ class MainActivity : ComponentActivity() {
                         tick = refreshTick,
                         onAdd = ::addMessage,
                         onDelete = ::deleteMessage,
+                        onChanged = { refreshTick++ },
                         onOpenSettings = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
                     )
                 }
@@ -49,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        refreshTick++ // coming back to the app -> show latest statuses
+        refreshTick++
     }
 
     /** Returns an error message, or null if it worked. */
@@ -86,6 +100,7 @@ fun HomeScreen(
     tick: Int,
     onAdd: (String, String, Long) -> String?,
     onDelete: (Long) -> Unit,
+    onChanged: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
@@ -118,6 +133,8 @@ fun HomeScreen(
                 }
             }
         }
+
+        item { AutoUnlockCard(tick, onChanged) }
 
         // --- New message form ---
         item {
@@ -197,6 +214,70 @@ fun HomeScreen(
 }
 
 @Composable
+fun AutoUnlockCard(tick: Int, onChanged: () -> Unit) {
+    val context = LocalContext.current
+    val hasPin = remember(tick) { PinVault.hasPin(context) }
+    val disabled = remember(tick) { AutoUnlock.isDisabled(context) }
+    var pin by remember { mutableStateOf("") }
+    var editing by remember { mutableStateOf(false) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Auto-unlock", style = MaterialTheme.typography.titleMedium)
+            Text(
+                when {
+                    !hasPin -> "OFF – messages wait until you unlock your phone."
+                    disabled -> "⚠️ Turned off after a failed unlock. Save your PIN again."
+                    else -> "🔓 ON – unlocks your phone to send, then locks it again."
+                },
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            if (!hasPin || disabled || editing) {
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { v -> pin = v.filter { it.isDigit() }.take(16) },
+                    label = { Text("Your lock-screen PIN") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Must match your lock screen PIN exactly. If it's wrong, the app tries ONCE, then turns auto-unlock off.",
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Button(
+                    enabled = pin.length >= 4,
+                    onClick = {
+                        PinVault.save(context, pin)
+                        AutoUnlock.setDisabled(context, false)
+                        pin = ""
+                        editing = false
+                        onChanged()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Save PIN") }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { editing = true }, modifier = Modifier.weight(1f)) {
+                        Text("Change PIN")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            PinVault.clear(context)
+                            AutoUnlock.setDisabled(context, false)
+                            onChanged()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Turn off") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun MessageRow(m: ScheduledMessage, onDelete: (Long) -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -217,18 +298,16 @@ fun MessageRow(m: ScheduledMessage, onDelete: (Long) -> Unit) {
 
 fun statusLabel(m: ScheduledMessage): String = when (m.status) {
     Status.PENDING -> "⏰ Waiting"
-    Status.SENDING ->
-        if (System.currentTimeMillis() - m.sendAt > 2 * 60_000) "⚠️ Not confirmed (screen locked?)"
-        else "📤 Sending…"
+    Status.WAITING_UNLOCK -> "🔒 Will send when you unlock"
+    Status.SENDING -> "📤 Sending…"
     Status.SENT -> "✅ Sent"
-    Status.FAILED -> "❌ Failed (sender was off?)"
-    Status.MISSED -> "⏭️ Missed (phone was off too long)"
+    Status.FAILED -> "❌ Failed"
+    Status.MISSED -> "⏭️ Missed (too late)"
 }
 
 fun format(millis: Long, pattern: String): String =
     SimpleDateFormat(pattern, Locale.getDefault()).format(Date(millis))
 
-/** Default = 1 hour from now, rounded to the minute. */
 fun defaultSendTime(): Long = Calendar.getInstance().apply {
     add(Calendar.HOUR_OF_DAY, 1)
     set(Calendar.SECOND, 0)
