@@ -8,7 +8,7 @@ object PendingSend {
 
     @Volatile private var job: Job? = null
 
-    fun set(text: String, timeoutMs: Long = 30_000) {
+    fun set(text: String, timeoutMs: Long = 60_000) {
         job = Job(text, SystemClock.elapsedRealtime() + timeoutMs)
     }
 
