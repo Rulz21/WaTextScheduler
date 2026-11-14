@@ -12,7 +12,16 @@ data class ScheduledMessage(
     val text: String,
     val sendAt: Long,       // time in milliseconds
     val status: Status = Status.PENDING,
-)
+    val name: String? = null,   // contact name, if picked from contacts
+) {
+    /** "Ali (+60123456789)" or just "+60123456789" */
+    val recipientLabel: String
+        get() = if (name.isNullOrBlank()) "+$phone" else "$name (+$phone)"
+
+    /** "Ali" or "+60123456789" – for notifications */
+    val shortLabel: String
+        get() = if (name.isNullOrBlank()) "+$phone" else name
+}
 
 /** Saves the list of scheduled messages as JSON inside the app's private storage. */
 object MessageStore {
@@ -30,6 +39,7 @@ object MessageStore {
                 text = o.getString("text"),
                 sendAt = o.getLong("sendAt"),
                 status = Status.valueOf(o.getString("status")),
+                name = o.optString("name").ifBlank { null },
             )
         }.sortedBy { it.sendAt }
     }
@@ -37,8 +47,10 @@ object MessageStore {
     fun get(context: Context, id: Long): ScheduledMessage? = all(context).firstOrNull { it.id == id }
 
     @Synchronized
-    fun add(context: Context, phone: String, text: String, sendAt: Long): ScheduledMessage {
-        val msg = ScheduledMessage(id = System.currentTimeMillis(), phone = phone, text = text, sendAt = sendAt)
+    fun add(context: Context, phone: String, text: String, sendAt: Long, name: String? = null): ScheduledMessage {
+        val msg = ScheduledMessage(
+            id = System.currentTimeMillis(), phone = phone, text = text, sendAt = sendAt, name = name
+        )
         save(context, all(context) + msg)
         return msg
     }
@@ -63,6 +75,7 @@ object MessageStore {
                     .put("text", m.text)
                     .put("sendAt", m.sendAt)
                     .put("status", m.status.name)
+                    .put("name", m.name ?: "")
             )
         }
         prefs(context).edit().putString(KEY, arr.toString()).commit()

@@ -8,8 +8,11 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.ContactsContract
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,6 +37,7 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private var refreshTick by mutableIntStateOf(0)
+    private var pickedChat by mutableStateOf<Pair<String?, String>?>(null)
 
     private val askNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -51,6 +55,9 @@ class MainActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize().safeDrawingPadding()) {
                     HomeScreen(
                         tick = refreshTick,
+                        pickedChat = pickedChat,
+                        onPickedChatUsed = { pickedChat = null },
+                        onPickFromWhatsApp = ::pickFromWhatsApp,
                         onAdd = ::addMessage,
                         onDelete = ::deleteMessage,
                         onChanged = { refreshTick++ },
@@ -63,13 +70,30 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        ChatPicker.take()?.let { pickedChat = it }  // came back from "Pick from WhatsApp"?
         refreshTick++
     }
 
+    private fun pickFromWhatsApp() {
+        if (!WhatsAppLauncher.isSenderEnabled(this)) {
+            toast("Turn on 'WaTextScheduler sender' in Accessibility first")
+            return
+        }
+        val intent = packageManager.getLaunchIntentForPackage("com.whatsapp")
+            ?: packageManager.getLaunchIntentForPackage("com.whatsapp.w4b")
+        if (intent == null) {
+            toast("WhatsApp not installed")
+            return
+        }
+        ChatPicker.start()
+        toast("Open the chat you want – you'll come back here automatically")
+        startActivity(intent)
+    }
+
     /** Returns an error message, or null if it worked. */
-    private fun addMessage(phone: String, text: String, atMillis: Long): String? {
-        val digits = phone.filter { it.isDigit() }
-        if (digits.length < 9) return "Enter a full number with country code, e.g. 60123456789"
+    private fun addMessage(phone: String, text: String, atMillis: Long, name: String?): String? {
+        val number = normalizeNumber(phone)
+        if (number.length < 10) return "Enter a valid number, e.g. 012-345 6789"
         if (text.isBlank()) return "Message is empty"
         if (atMillis <= System.currentTimeMillis()) return "That time has already passed"
         if (!SendScheduler.canSchedule(this)) {
@@ -80,7 +104,7 @@ class MainActivity : ComponentActivity() {
             }
             return "Allow 'Alarms & reminders' for this app, then try again"
         }
-        val msg = MessageStore.add(this, digits, text.trim(), atMillis)
+        val msg = MessageStore.add(this, number, text.trim(), atMillis, name)
         SendScheduler.schedule(this, msg)
         refreshTick++
         return null
@@ -91,6 +115,8 @@ class MainActivity : ComponentActivity() {
         MessageStore.remove(this, id)
         refreshTick++
     }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 }
 
 // ---------- Screen ----------
@@ -98,7 +124,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun HomeScreen(
     tick: Int,
-    onAdd: (String, String, Long) -> String?,
+    pickedChat: Pair<String?, String>?,
+    onPickedChatUsed: () -> Unit,
+    onPickFromWhatsApp: () -> Unit,
+    onAdd: (String, String, Long, String?) -> String?,
     onDelete: (Long) -> Unit,
     onChanged: () -> Unit,
     onOpenSettings: () -> Unit
@@ -107,10 +136,36 @@ fun HomeScreen(
     val messages = remember(tick) { MessageStore.all(context) }
     val senderOn = remember(tick) { WhatsAppLauncher.isSenderEnabled(context) }
 
-    var phone by remember { mutableStateOf("60") }
+    var phone by remember { mutableStateOf("") }
+    var contactName by remember { mutableStateOf<String?>(null) }
     var text by remember { mutableStateOf("") }
     var sendAt by remember { mutableLongStateOf(defaultSendTime()) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    // Phone contacts picker
+    val pickContact = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val uri = result.data?.data
+        if (uri != null) {
+            readPickedContact(context, uri)?.let { (name, number) ->
+                phone = number
+                contactName = name.ifBlank { null }
+                error = null
+            }
+        }
+    }
+
+    // Result of "Pick from WhatsApp"
+    LaunchedEffect(pickedChat) {
+        val picked = pickedChat ?: return@LaunchedEffect
+        if (picked.second.isNotBlank()) {
+            phone = picked.second
+            contactName = null
+            error = null
+        } else {
+            error = "\"${picked.first}\" is a saved contact – use 📇 Contacts for them."
+        }
+        onPickedChatUsed()
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -140,11 +195,35 @@ fun HomeScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
-                    value = phone, onValueChange = { phone = it },
-                    label = { Text("Phone (e.g. 60123456789)") },
+                    value = phone,
+                    onValueChange = {
+                        phone = it
+                        contactName = null
+                    },
+                    label = { Text("Phone (e.g. 012-345 6789)") },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    supportingText = {
+                        if (phone.isNotBlank()) {
+                            val who = contactName?.let { "👤 $it · " } ?: ""
+                            Text("${who}Will send to +${normalizeNumber(phone)}")
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            pickContact.launch(
+                                Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
+                            )
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("📇 Contacts") }
+                    OutlinedButton(onClick = onPickFromWhatsApp, modifier = Modifier.weight(1f)) {
+                        Text("💬 WhatsApp")
+                    }
+                }
                 OutlinedTextField(
                     value = text, onValueChange = { text = it },
                     label = { Text("Message") },
@@ -189,7 +268,7 @@ fun HomeScreen(
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 Button(
                     onClick = {
-                        error = onAdd(phone, text, sendAt)
+                        error = onAdd(phone, text, sendAt, contactName)
                         if (error == null) {
                             text = ""
                             sendAt = defaultSendTime()
@@ -283,7 +362,7 @@ fun MessageRow(m: ScheduledMessage, onDelete: (Long) -> Unit) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(format(m.sendAt, "EEE, d MMM · HH:mm"), style = MaterialTheme.typography.titleSmall)
-                Text("To +${m.phone}", style = MaterialTheme.typography.bodySmall)
+                Text("To ${m.recipientLabel}", style = MaterialTheme.typography.bodySmall)
                 Text(m.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(statusLabel(m), style = MaterialTheme.typography.labelMedium)
             }

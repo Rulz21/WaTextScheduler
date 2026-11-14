@@ -81,18 +81,24 @@ class WaSendService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val pkg = event?.packageName?.toString() ?: return
-        if (pkg in WA_PACKAGES) maybePressSend(pkg)
-    }
-
-    /** Lock the phone (Android 9+). */
-    fun lockScreen() {
-        AutoUnlock.clearAutoUnlocked()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
-            Log.i(TAG, "Locked again 🔒")
+        if (pkg in WA_PACKAGES) {
+            if (ChatPicker.isActive() && PendingSend.current() == null) tryCaptureChat(pkg)
+            else maybePressSend(pkg)
         }
     }
 
+    /** Lock the phone (Android 9+). */
+    /** Go to the home screen first, then lock the phone (Android 9+). */
+    fun lockScreen() {
+        AutoUnlock.clearAutoUnlocked()
+        performGlobalAction(GLOBAL_ACTION_HOME)   // leave WhatsApp
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            handler.postDelayed({
+                performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+                Log.i(TAG, "Went home and locked again 🔒")
+            }, 700)  // give the home screen a moment to appear
+        }
+    }
     // ================= WhatsApp: press Send =================
 
     private fun maybePressSend(pkg: String) {
@@ -119,7 +125,7 @@ class WaSendService : AccessibilityService() {
             if (id != null) {
                 MessageStore.setStatus(this, id, Status.SENT)
                 MessageStore.get(this, id)?.let {
-                    Notifier.show(this, it.id, "✅ Sent", "To +${it.phone}: ${it.text}")
+                    Notifier.show(this, it.id, "✅ Sent to ${it.shortLabel}", it.text)
                 }
                 if (AutoUnlock.recentlyAutoUnlocked()) {
                     handler.postDelayed({ lockScreen() }, 1_500)
@@ -307,6 +313,52 @@ class WaSendService : AccessibilityService() {
             n = n.parent
         }
         return false
+    }
+
+    // ================= "Pick from WhatsApp" =================
+
+    private var titleLogged = false
+
+    private fun tryCaptureChat(pkg: String) {
+        val root = rootInActiveWindow ?: return
+        // Only once you're inside a chat (the message box exists)
+        if (root.findAccessibilityNodeInfosByViewId("$pkg:id/entry").isEmpty()) return
+
+        val title = root.findAccessibilityNodeInfosByViewId("$pkg:id/conversation_contact_name")
+            .firstOrNull()?.text?.toString()?.trim()
+        if (title.isNullOrEmpty()) {
+            if (!titleLogged) {
+                titleLogged = true
+                Log.w(TAG, "Chat title not found – possible title elements:")
+                logTitleCandidates(root)
+            }
+            return
+        }
+        titleLogged = false
+
+        val looksLikeNumber = title.startsWith("+") && title.count { it.isDigit() } >= 8
+        if (looksLikeNumber) {
+            ChatPicker.finish(null, title)
+            Log.i(TAG, "Picked an unsaved number from WhatsApp")
+        } else {
+            ChatPicker.finish(title, "")  // saved contact: only the name is shown
+            Log.i(TAG, "Picked a saved contact from WhatsApp (name only)")
+        }
+        // Back to our app
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        )
+    }
+
+    /** Debug: logs only title-like elements (not your messages). */
+    private fun logTitleCandidates(node: AccessibilityNodeInfo?, depth: Int = 0) {
+        if (node == null || depth > 12) return
+        val id = node.viewIdResourceName ?: ""
+        if (listOf("name", "title", "toolbar", "contact").any { id.contains(it) }) {
+            Log.d(TAG, "id=$id text='${node.text}'")
+        }
+        for (i in 0 until node.childCount) logTitleCandidates(node.getChild(i), depth + 1)
     }
 
     // ================= Debug =================

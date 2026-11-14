@@ -35,7 +35,7 @@ object SendFlow {
             if (m.status != Status.WAITING_UNLOCK) continue
             if (now - m.sendAt > LATE_LIMIT_MS) {
                 MessageStore.setStatus(context, m.id, Status.MISSED)
-                Notifier.show(context, m.id, "⏭️ Message skipped", "It was too late to send your message to +${m.phone}.")
+                Notifier.show(context, m.id, "⏭️ Message skipped", "It was too late to send your message to ${m.shortLabel}.")
             } else {
                 MessageStore.setStatus(context, m.id, Status.PENDING)
                 SendScheduler.scheduleAt(context, m.id, now + 2_000)
@@ -67,7 +67,7 @@ object SendFlow {
             if (MessageStore.get(app, msg.id)?.status == Status.WAITING_UNLOCK) {
                 Notifier.show(
                     app, msg.id, "🔒 Unlock to send",
-                    "Couldn't unlock automatically. Your message to +${msg.phone} will send as soon as you unlock your phone."
+                    "Couldn't unlock automatically. Your message to ${msg.shortLabel} will send as soon as you unlock your phone."
                 )
             }
         }, UNLOCK_NOTICE_MS)
@@ -96,7 +96,7 @@ object SendFlow {
         if (notify) {
             Notifier.show(
                 context, msg.id, "🔒 Unlock to send",
-                "$reason. Your message to +${msg.phone} will send as soon as you unlock your phone."
+                "$reason. Your message to ${msg.shortLabel} will send as soon as you unlock your phone."
             )
         }
     }
@@ -114,7 +114,7 @@ object SendFlow {
                 Log.w(TAG, "Message ${msg.id} not confirmed in time")
                 if (PendingSend.currentId() == msg.id) PendingSend.clear()
                 MessageStore.setStatus(app, msg.id, Status.FAILED)
-                Notifier.show(app, msg.id, "❌ Not sent", "Your message to +${msg.phone} didn't go through. Open the app to check.")
+                Notifier.show(app, msg.id, "❌ Not sent", "Your message to ${msg.shortLabel} didn't go through. Open the app to check.")
                 relockIfWeUnlocked()
             }
         }, CONFIRM_TIMEOUT_MS)
