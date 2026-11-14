@@ -36,6 +36,7 @@ class WaSendService : AccessibilityService() {
             return
         }
         if (clickNodeOrParent(send)) {
+            PendingSend.currentId()?.let { MessageStore.setStatus(this, it, Status.SENT) }
             PendingSend.clear()
             Log.i(TAG, "Message sent ✅")
         }

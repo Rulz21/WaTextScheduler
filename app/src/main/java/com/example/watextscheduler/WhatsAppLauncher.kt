@@ -11,13 +11,13 @@ object WhatsAppLauncher {
     private const val TAG = "WaSend"
 
     /** Opens WhatsApp on the chat with `phone`, `text` typed in. Returns false if it couldn't. */
-    fun open(context: Context, phone: String, text: String, autoSend: Boolean): Boolean {
+    fun open(context: Context, phone: String, text: String, autoSend: Boolean, messageId: Long? = null): Boolean {
         if (autoSend) {
             if (!isSenderEnabled(context)) {
                 Log.w(TAG, "Sender service is OFF – can't auto-send")
                 return false
             }
-            PendingSend.set(text) // tell the service: "press Send for this message"
+            PendingSend.set(text, messageId) // tell the service: "press Send for this message"
         }
 
         val number = phone.filter { it.isDigit() }          // "+60 12-345 6789" -> "60123456789"
