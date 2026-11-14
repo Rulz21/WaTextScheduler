@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">WaTextScheduler</string>
+    <string name="wa_send_service_description">Lets WaTextScheduler press Send in WhatsApp for messages you scheduled. It does nothing else.</string>
 </resources>
