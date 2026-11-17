@@ -4,7 +4,7 @@
 
 An Android app that lets you write a WhatsApp message now and have it sent at a time you choose, from your own number, without touching your phone. It drives the **official WhatsApp app** on your device (no unofficial APIs, no servers), and can wake and unlock your phone with your PIN to send, then lock it again.
 
-> ⚠️ **Unofficial project.** Not affiliated with, endorsed by, or sponsored by WhatsApp or Meta. It automates the WhatsApp app through Android's Accessibility service, which may go against WhatsApp's Terms of Service. **Use at your own risk.** See [Disclaimer](#disclaimer).
+> ⚠️ **Unofficial project.** Not affiliated with, endorsed by, or sponsored by WhatsApp or Meta. It automates the WhatsApp app through Android's Accessibility service, which may go against WhatsApp's Terms of Service.
 
 <!-- Add screenshots here, e.g.:
 <p align="center">
