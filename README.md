@@ -15,7 +15,7 @@ This keeps happening to me: I need to message someone, but **not right now**.
 
 Sometimes they're busy, or it's too late at night to text them. Sometimes I'm the busy one, and I know exactly what I want to say but it's not the right moment to send it. So I tell myself *"I'll message them later"*…
 
-…and then I forget. 😅
+…and then I forget. 
 
 The usual fix is a reminder. But a reminder only tells me to do the thing. I still have to stop what I'm doing, open WhatsApp, find the chat and type the message. And if I'm busy when the reminder goes off, I snooze it and forget anyway.
 
