@@ -89,15 +89,36 @@ class WaSendService : AccessibilityService() {
 
     /** Lock the phone (Android 9+). */
     /** Go to the home screen first, then lock the phone (Android 9+). */
+    /** Exit the chat, go to the home screen, then lock the phone (Android 9+). */
     fun lockScreen() {
         AutoUnlock.clearAutoUnlocked()
-        performGlobalAction(GLOBAL_ACTION_HOME)   // leave WhatsApp
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            handler.postDelayed({
-                performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
-                Log.i(TAG, "Went home and locked again 🔒")
-            }, 700)  // give the home screen a moment to appear
+        exitChat(attemptsLeft = 2) {
+            performGlobalAction(GLOBAL_ACTION_HOME)              // go to home screen
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                handler.postDelayed({
+                    performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN) // lock
+                    Log.i(TAG, "Left chat, went home and locked again 🔒")
+                }, 700)
+            }
         }
+    }
+
+    /** Press Back until we're out of the WhatsApp chat (max 2x – the first may only close the keyboard). */
+    private fun exitChat(attemptsLeft: Int, then: () -> Unit) {
+        if (attemptsLeft == 0 || !isInWhatsAppChat()) {
+            then()
+            return
+        }
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        handler.postDelayed({ exitChat(attemptsLeft - 1, then) }, 400)
+    }
+
+    /** Is a WhatsApp chat (with its message box) currently on screen? */
+    private fun isInWhatsAppChat(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val pkg = root.packageName?.toString() ?: return false
+        return pkg in WA_PACKAGES &&
+                root.findAccessibilityNodeInfosByViewId("$pkg:id/entry").isNotEmpty()
     }
     // ================= WhatsApp: press Send =================
 
